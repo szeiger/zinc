@@ -14,7 +14,14 @@ package sbt.inc
 import sbt.internal.inc._
 import sbt.io.IO.{ withTemporaryDirectory => withTmpDir }
 import sbt.io.syntax._
-import xsbti.compile.{ AnalysisStore, CompileAnalysis, DefaultExternalHooks, Inputs, Output }
+import xsbti.compile.{
+  AnalysisStore,
+  CompileAnalysis,
+  CompileResult,
+  DefaultExternalHooks,
+  Inputs,
+  Output
+}
 import java.util.Optional
 
 import xsbti.VirtualFile
@@ -39,6 +46,47 @@ class IncrementalCompilerSpec extends BaseCompilerSpec {
       val result = comp.doCompile()
       val result2 = comp.doCompile(_.withPreviousResult(comp.zinc.previousResult(result)))
       assert(!result2.hasModified)
+    } finally comp.close()
+  }
+
+  it should "keep trait extraHash stable for API-equivalent recompilation" in withTmpDir { tmp =>
+    val comp = VirtualSubproject(tmp.toPath / "p1").setup.createCompiler()
+    try {
+      val firstSource = StringVirtualFile(
+        "TraitExtraHash.scala",
+        """trait TraitExtraHashParent {
+          |  private val parentValue = 1
+          |  def value: Int = parentValue
+          |}
+          |
+          |trait TraitExtraHashChild extends TraitExtraHashParent {
+          |  def childValue: Int = value
+          |}
+          |
+          |class TraitExtraHashUser extends TraitExtraHashChild
+          |""".stripMargin
+      )
+      val secondSource = StringVirtualFile(
+        "TraitExtraHash.scala",
+        """// force recompilation without changing the public or private API
+          |trait TraitExtraHashParent {
+          |  private val parentValue = 1
+          |  def value: Int = parentValue
+          |}
+          |
+          |trait TraitExtraHashChild extends TraitExtraHashParent {
+          |  def childValue: Int = value
+          |}
+          |
+          |class TraitExtraHashUser extends TraitExtraHashChild
+          |""".stripMargin
+      )
+
+      val result1 = comp.compile(firstSource)
+      val result2 = comp.compile(secondSource)
+
+      assert(result2.hasModified)
+      assert(internalExtraHashes(result2) == internalExtraHashes(result1))
     } finally comp.close()
   }
 
@@ -261,4 +309,11 @@ class IncrementalCompilerSpec extends BaseCompilerSpec {
         }
       } finally comp.close()
   }
+
+  private def internalExtraHashes(result: CompileResult): Map[String, Int] =
+    result.analysis
+      .asInstanceOf[Analysis]
+      .apis
+      .internal
+      .map { case (className, api) => className -> api.extraHash() }
 }
