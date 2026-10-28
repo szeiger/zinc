@@ -740,7 +740,11 @@ private final class AnalysisCallback(
       source: VirtualFileRef,
       context: DependencyContext
   ): Unit = {
-    binaryClassName.put(binary, className)
+    binaryClassName.asJava.compute(
+      binary,
+      (_, existing) =>
+        if (existing == null || className.compareTo(existing) < 0) className else existing
+    )
     add(libraryDeps, source, binary)
   }
 
