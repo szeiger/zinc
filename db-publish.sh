@@ -3,7 +3,7 @@
 set -eo pipefail
 
 BASE_VERSION="1.10.8"
-PATCHLEVEL="3"
+PATCHLEVEL="4"
 
 TEMP_REPO=$(mktemp -d)
 BUILD_VERSION="$BASE_VERSION-bin-db-$PATCHLEVEL-`git rev-parse --short HEAD`"
