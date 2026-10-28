@@ -512,7 +512,39 @@ object ClassToAPI {
   def annotations(a: Array[Annotation]): Array[api.Annotation] =
     if (a.length == 0) emptyAnnotationArray else arrayMap(a)(annotation)
   def annotation(a: Annotation): api.Annotation =
-    api.Annotation.of(reference(a.annotationType), Array(javaAnnotation(a.toString)))
+    api.Annotation.of(reference(a.annotationType), Array(javaAnnotation(annotationString(a))))
+
+  // Annotation.toString inherits reflection's unspecified member order.
+  private def annotationString(a: Annotation): String = {
+    val members = a.annotationType.getDeclaredMethods.sortBy(_.getName).map { method =>
+      method.getName + "=" + annotationMember(a, method)
+    }
+    "@" + a.annotationType.getName + members.mkString("(", ", ", ")")
+  }
+
+  private def annotationMember(a: Annotation, method: Method): String = {
+    val value =
+      if (Proxy.isProxyClass(a.getClass))
+        Proxy.getInvocationHandler(a).invoke(a, method, null)
+      else {
+        if (!Modifier.isPublic(method.getDeclaringClass.getModifiers)) method.setAccessible(true)
+        method.invoke(a)
+      }
+    annotationValue(value)
+  }
+
+  private def annotationValue(value: Any): String = value match {
+    case a: Annotation => annotationString(a)
+    case s: String => s.length + ":" + s
+    case c: Class[?] => c.getName
+    case e: Enum[?] => e.name()
+    case other if other.getClass.isArray =>
+      (0 until java.lang.reflect.Array.getLength(other)).map { index =>
+        val item = annotationValue(java.lang.reflect.Array.get(other, index))
+        item.length + ":" + item
+      }.mkString("{", ", ", "}")
+    case other => other.toString
+  }
 
   /**
    * This method mimics Scala compiler's behavior of `Symbol.children` method when Symbol corresponds to

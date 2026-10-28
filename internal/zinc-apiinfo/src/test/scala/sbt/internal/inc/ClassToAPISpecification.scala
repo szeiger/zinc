@@ -13,11 +13,56 @@ package sbt
 package internal
 package inc
 
+import java.beans.ConstructorProperties
+import java.lang.annotation.{ Repeatable, Retention, RetentionPolicy }
+
 import sbt.internal.inc.classfile.JavaCompilerForUnitTesting
 import xsbti.{ AnalysisCallback, VirtualFileRef }
 import xsbti.api.{ ClassLike, ClassLikeDef, DefinitionType }
 
 class ClassToAPISpecification extends UnitSpec {
+
+  "ClassToAPI annotations" should "serialize scalar members in name order" in {
+    val annotation = new java.lang.Deprecated {
+      def annotationType(): Class[java.lang.Deprecated] = classOf[java.lang.Deprecated]
+      def since(): String = "a, b"
+      def forRemoval(): Boolean = true
+    }
+    assert(
+      ClassToAPI.annotation(annotation).arguments()(0).value() ==
+        "@java.lang.Deprecated(forRemoval=true, since=4:a, b)"
+    )
+  }
+
+  it should "serialize enum and class values by name" in {
+    val retention = new Retention {
+      def annotationType(): Class[Retention] = classOf[Retention]
+      def value(): RetentionPolicy = RetentionPolicy.RUNTIME
+    }
+    val repeatable = new Repeatable {
+      def annotationType(): Class[Repeatable] = classOf[Repeatable]
+      def value(): Class[Retention] = classOf[Retention]
+    }
+    assert(
+      ClassToAPI.annotation(retention).arguments()(0).value() ==
+        "@java.lang.annotation.Retention(value=RUNTIME)"
+    )
+    assert(
+      ClassToAPI.annotation(repeatable).arguments()(0).value() ==
+        "@java.lang.annotation.Repeatable(value=java.lang.annotation.Retention)"
+    )
+  }
+
+  it should "preserve array order and string boundaries" in {
+    val annotation = new ConstructorProperties {
+      def annotationType(): Class[ConstructorProperties] = classOf[ConstructorProperties]
+      def value(): Array[String] = Array("a, b", "c")
+    }
+    assert(
+      ClassToAPI.annotation(annotation).arguments()(0).value() ==
+        "@java.beans.ConstructorProperties(value={6:4:a, b, 3:1:c})"
+    )
+  }
 
   "ClassToAPI" should "extract api of inner classes" in {
     val src =
