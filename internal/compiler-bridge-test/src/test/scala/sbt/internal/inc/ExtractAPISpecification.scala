@@ -3,6 +3,11 @@ package internal
 package inc
 
 import xsbti.api._
+import scala.reflect.internal.util.BatchSourceFile
+import scala.reflect.io.VirtualDirectory
+import scala.tools.nsc.{ Global, Settings }
+import scala.tools.nsc.reporters.StoreReporter
+import xsbt.ExtractAPI
 import xsbt.api.SameAPI
 
 class ExtractAPISpecification
@@ -11,6 +16,64 @@ class ExtractAPISpecification
     with BridgeProviderTestkit {
 
   "ExtractAPI" should "give stable names to members of existential types in method signatures" in stableExistentialNames()
+
+  it should "avoid reusing type conversions across existential scopes" in {
+    val settings = new Settings
+    settings.usejavacp.value = true
+    settings.outputDirs.setSingleOutput(new VirtualDirectory("(memory)", None))
+    val reporter = new StoreReporter(settings)
+    val global = new Global(settings, reporter)
+    val run = new global.Run
+    val source = "class Fixture { def value: List[_] = Nil }"
+    run.compileSources(List(new BatchSourceFile("Fixture.scala", source)))
+    assert(!reporter.hasErrors, reporter.infos.toString)
+    val in = global.rootMirror.staticClass("Fixture")
+    val result = global.exitingTyper {
+      in.info.member(global.TermName("value")).info.finalResultType
+    }
+    val global.ExistentialType(variables, qualified) = result
+    val extractor = new ExtractAPI[global.type](global, StringVirtualFile("Fixture.scala", source))
+    val process = extractor.getClass.getDeclaredMethods.find(_.getName == "processType").get
+    process.setAccessible(true)
+    val renamingsMethod =
+      extractor.getClass.getDeclaredMethods.find(_.getName == "existentialRenamings").get
+    renamingsMethod.setAccessible(true)
+    val renamings = renamingsMethod.invoke(extractor)
+    val enter = renamings.getClass.getMethods
+      .find(_.getName == "enterExistentialTypeVariables")
+      .get
+    val leave = renamings.getClass.getMethods
+      .find(_.getName == "leaveExistentialTypeVariables")
+      .get
+    def converted(): Parameterized =
+      process.invoke(extractor, in, qualified).asInstanceOf[Parameterized]
+    def binder(value: Parameterized): String =
+      value.typeArguments()(0).asInstanceOf[ParameterRef].id()
+
+    enter.invoke(renamings, variables)
+    val first = converted()
+    assert(binder(first) == "existential_1_0")
+    assert(binder(converted()) == "existential_1_0")
+    leave.invoke(renamings, variables)
+
+    enter.invoke(renamings, List.empty[global.Symbol])
+    enter.invoke(renamings, variables)
+    assert(binder(converted()) == "existential_2_0")
+    leave.invoke(renamings, variables)
+    leave.invoke(renamings, List.empty[global.Symbol])
+
+    enter.invoke(renamings, in :: variables)
+    assert(binder(converted()) == "existential_1_1")
+    leave.invoke(renamings, in :: variables)
+
+    enter.invoke(renamings, variables)
+    assert(binder(converted()) == "existential_1_0")
+    leave.invoke(renamings, variables)
+
+    val plain = global.definitions.StringTpe
+    val cached = process.invoke(extractor, in, plain)
+    assert(process.invoke(extractor, in, plain) eq cached)
+  }
 
   it should "extract children of a sealed class" in {
     def compileAndGetFooClassApi(src: String): ClassLike = {

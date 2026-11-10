@@ -151,6 +151,7 @@ class ExtractAPI[GlobalType <: Global](
           renameTo(tv) = newName
       }
     }
+    def isActive: Boolean = nestingLevel > 0
     def renaming(symbol: Symbol): Option[String] = renameTo.get(symbol)
   }
 
@@ -565,7 +566,9 @@ class ExtractAPI[GlobalType <: Global](
   }
 
   private def processType(in: Symbol, t: Type): xsbti.api.Type =
-    typeCache.getOrElseUpdate((in, t), makeType(in, t))
+    // Names inside existential scopes depend on the active binders.
+    if (existentialRenamings.isActive) makeType(in, t)
+    else typeCache.getOrElseUpdate((in, t), makeType(in, t))
   private def makeType(in: Symbol, t: Type): xsbti.api.Type = {
 
     val dealiased = t match {
