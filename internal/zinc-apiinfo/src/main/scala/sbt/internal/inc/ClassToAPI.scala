@@ -16,6 +16,7 @@ package inc
 import java.lang.reflect.{ Array => _, _ }
 import java.lang.annotation.Annotation
 import annotation.tailrec
+import scala.util.control.NonFatal
 import inc.classfile.ClassFile
 import xsbti.api
 import xsbti.api.SafeLazyProxy
@@ -512,7 +513,54 @@ object ClassToAPI {
   def annotations(a: Array[Annotation]): Array[api.Annotation] =
     if (a.length == 0) emptyAnnotationArray else arrayMap(a)(annotation)
   def annotation(a: Annotation): api.Annotation =
-    api.Annotation.of(reference(a.annotationType), Array(javaAnnotation(a.toString)))
+    api.Annotation.of(reference(a.annotationType), Array(javaAnnotation(annotationString(a))))
+
+  // Annotation.toString inherits reflection's unspecified member order.
+  private def annotationString(a: Annotation): String =
+    try {
+      val members = a.annotationType.getDeclaredMethods.filter { method =>
+        Modifier.isPublic(method.getModifiers) && Modifier.isAbstract(method.getModifiers) &&
+        !method.isSynthetic && method.getParameterCount == 0
+      }.sortBy(_.getName).map { method =>
+        "(member " + quoted(method.getName) + " " + annotationMember(a, method) + ")"
+      }
+      "(annotation " + quoted(a.annotationType.getName) + members.mkString(" ", " ", ")")
+    } catch {
+      // Annotation proxies can describe missing classes or enum constants without resolving them.
+      case NonFatal(_) => a.toString
+    }
+
+  private def annotationMember(a: Annotation, method: Method): String = {
+    val value =
+      if (Proxy.isProxyClass(a.getClass))
+        Proxy.getInvocationHandler(a).invoke(a, method, null)
+      else {
+        if (!Modifier.isPublic(method.getDeclaringClass.getModifiers)) method.setAccessible(true)
+        method.invoke(a)
+      }
+    annotationValue(value)
+  }
+
+  private def quoted(value: String): String =
+    "\"" + value.flatMap {
+      case '\\'                           => "\\\\"
+      case '"'                            => "\\\""
+      case c if Character.isISOControl(c) => f"\\u${c.toInt}%04x"
+      case c                              => c.toString
+    } + "\""
+
+  private def annotationValue(value: Any): String = value match {
+    case s: String   => "(string " + quoted(s) + ")"
+    case c: Char     => "(char " + quoted(c.toString) + ")"
+    case c: Class[?] => "(class " + quoted(c.getName) + ")"
+    case e: Enum[?] => "(enum " + quoted(e.getDeclaringClass.getName) + " " + quoted(e.name()) + ")"
+    case a: Annotation => annotationString(a)
+    case other if other.getClass.isArray =>
+      (0 until java.lang.reflect.Array.getLength(other)).map { index =>
+        annotationValue(java.lang.reflect.Array.get(other, index))
+      }.mkString("(array ", " ", ")")
+    case other => "(" + other.getClass.getName + " " + other.toString + ")"
+  }
 
   /**
    * This method mimics Scala compiler's behavior of `Symbol.children` method when Symbol corresponds to

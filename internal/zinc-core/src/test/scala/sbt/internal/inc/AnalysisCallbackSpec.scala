@@ -102,7 +102,13 @@ class AnalysisCallbackSpec extends UnitSpec {
       binary: xsbti.VirtualFile,
       from: VirtualFileRef
   ): Unit =
-    callback.binaryDependency(converter.toPath(binary), name, "Example", from, DependencyByMemberRef)
+    callback.binaryDependency(
+      converter.toPath(binary),
+      name,
+      "Example",
+      from,
+      DependencyByMemberRef
+    )
 
   private def newCallback(): AnalysisCallback = {
     val output = CompileOutput.empty

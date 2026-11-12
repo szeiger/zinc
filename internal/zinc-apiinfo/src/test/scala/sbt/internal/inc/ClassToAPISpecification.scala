@@ -52,6 +52,42 @@ class ClassToAPISpecification extends UnitSpec {
     assert(apis.keySet === Set("A", "A.B"))
   }
 
+  it should "render annotation values with sorted members and unambiguous types" in {
+    def rendered(c: Class[?]): String =
+      ClassToAPI.annotation(c.getAnnotation(classOf[AnnotationValues.Values])).arguments()(0).value()
+    val single = rendered(classOf[AnnotationValues.Single])
+    val multiple = rendered(classOf[AnnotationValues.Multiple])
+    assert(single != multiple)
+    assert(single.contains("(array (string \"a,b\"))"))
+    assert(multiple.contains("(array (string \"a\") (string \"b\"))"))
+    assert(single.indexOf("(member \"b\"") < single.indexOf("(member \"character\""))
+    assert(single.contains("(class \"java.lang.String\")"))
+    assert(single.contains("(enum \"sbt.internal.inc.AnnotationValues$Choice\" \"FIRST\")"))
+    assert(single.contains("(annotation \"sbt.internal.inc.AnnotationValues$Nested\" " +
+      "(member \"a\" (string \"first\")) (member \"z\" (string \"last\")))"))
+    assert(single.contains("(char \"'\")"))
+    val text = single.substring(single.indexOf("(member \"text\""))
+    assert(text.contains("\\\\"))
+    assert(text.contains("\\\""))
+    assert(text.contains("\\u000a"))
+    Seq("Byte", "Short", "Integer", "Long", "Float", "Double", "Boolean").foreach { t =>
+      assert(single.contains("(java.lang." + t + " "))
+    }
+  }
+
+  it should "preserve the annotation proxy description for unresolved class and enum members" in {
+    Seq(false, true).foreach { enumValue =>
+      val annotation = AnnotationValues.unresolved(enumValue)
+      assert(ClassToAPI.annotation(annotation).arguments()(0).value() == annotation.toString)
+    }
+  }
+
+  it should "ignore static instrumentation methods on annotation types" in {
+    val value = ClassToAPI.annotation(AnnotationValues.instrumented()).arguments()(0).value()
+    assert(value.contains("(member \"value\" (string \"member\"))"))
+    assert(!value.contains("jacoco"))
+  }
+
   /**
    * Compiles given source code using Java compiler and returns API representation
    * extracted by ClassToAPI class.
